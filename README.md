@@ -23,6 +23,11 @@ npm run verify     # 32 组领域规则断言 + 9 项 jsdom UI 交互冒烟
 - `npm run verify:rules`：重复牙位、时间冲突、非法阶段跳转、必填门禁、三类角色权限、指标/筛选/导出同步、空库恢复、持久化。
 - `npm run verify:ui`：jsdom 挂载完整 App，验证角色切换、列表筛选、阶段门禁逐环阻止与放行、材料登记、联系方式校验、日历双击排期、导出留痕、刷新（重挂载）不丢数据。
 
+### 检查链路的环境稳定性
+
+- 排期用例的固定时钟按**本地挂钟**构造（`new Date(2026, 8, 13, 9)`），与无时区 `datetime-local` 入参的比较关系在任意 `TZ` 下一致，已在 UTC / Asia/Shanghai / America/Los_Angeles / Pacific/Auckland 下验证通过。
+- jsdom 全局通过 `Object.defineProperty(..., { configurable: true })` 注入，兼容 Node 21+ 上只读内置全局（如 `navigator` 只读 getter），不会因严格模式只读赋值中断。
+
 ## 功能与规则
 
 ### 数据模型

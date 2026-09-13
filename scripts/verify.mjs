@@ -3,13 +3,18 @@
 import assert from "node:assert/strict";
 
 // ---- localStorage shim（模拟浏览器本地持久化） ----
+// Node 21+ 的部分内置全局（如 navigator）在严格模式下只读赋值会抛错，
+// 统一用 defineProperty(configurable) 注入，兼容所有 Node 版本。
 const mem = new Map();
-globalThis.localStorage = {
-  getItem: (k) => (mem.has(k) ? mem.get(k) : null),
-  setItem: (k, v) => mem.set(k, String(v)),
-  removeItem: (k) => mem.delete(k),
-  clear: () => mem.clear(),
-};
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+    clear: () => mem.clear(),
+  },
+});
 
 const {
   USERS,
@@ -34,7 +39,13 @@ assert.equal(zhou.role, "assistant");
 assert.equal(he.role, "frontdesk");
 
 let seq = 0;
-const ctx = (user, at = "2026-09-13T09:00:00.000Z") => ({
+// 固定"当前时刻"必须按本地挂钟构造：排期入参是无时区 datetime（按本地时区解释），
+// 若这里用 UTC 绝对时刻（...Z），UTC+ 时区下 11:00 本地会早于 09:00Z 被误判为过去。
+const LOCAL_NOW = new Date(2026, 8, 13, 9, 0, 0, 0);
+const NOW_ISO = LOCAL_NOW.toISOString();
+// 足够远的未来视角（按本地构造），保证任何时区下种子复诊都已逾期
+const FUTURE_ISO = new Date(2030, 0, 2, 0, 0, 0, 0).toISOString();
+const ctx = (user, at = NOW_ISO) => ({
   user,
   at,
   uid: () => `t${++seq}`,
@@ -60,7 +71,7 @@ console.log("\n[1] 空库恢复示例与本地持久化");
 let db = emptyDB();
 assert.ok(isEmpty(db));
 check("空库可恢复示例数据（3 患者 / 3 疗程 / 2 复诊 / 3 材料 / 含日志）", () => {
-  db = buildSeed("2026-09-13T09:00:00.000Z", () => `s${++seq}`, chen);
+  db = buildSeed(NOW_ISO, () => `s${++seq}`, chen);
   assert.equal(db.patients.length, 3);
   assert.equal(db.treatments.length, 3);
   assert.equal(db.appointments.length, 2);
@@ -419,28 +430,29 @@ check("改派医生后待赴约复诊同步改派，且新医生拥有编辑/排
 
 console.log("\n[6] 指标、筛选、列表随数据同步");
 check("指标与当前数据一致（待复诊/逾期/完成/封药/平均工作长度）", () => {
-  const mNow = computeMetrics(db, "2026-09-13T09:00:00.000Z");
+  const mNow = computeMetrics(db, NOW_ISO);
   assert.equal(mNow.filled, 2); // 示例 #11 与走完全流程的 #37
   assert.ok(mNow.active >= 3);
   assert.ok(mNow.medicated >= 1);
   assert.match(mNow.avgWorkingLength, /mm$/);
-  const mFuture = computeMetrics(db, "2030-01-01T00:00:00.000Z");
+  const mFuture = computeMetrics(db, FUTURE_ISO);
   assert.ok(mFuture.overdue >= 1, "未来视角下示例复诊应全部逾期");
-  assert.equal(mFuture.waiting, mFuture.overdue + (mFuture.waiting - mFuture.overdue));
+  // 剩余待赴约复诊都在 2026 年，2030 视角下应全部逾期（原先这里是恒真式，加强为精确相等）
+  assert.equal(mFuture.waiting, mFuture.overdue);
 });
 check("阶段筛选 + 医生筛选 + 关键字 + 仅逾期 同步收窄列表", () => {
-  const all = filterCourses(db, DEFAULT_FILTERS, "2026-09-13T09:00:00.000Z");
+  const all = filterCourses(db, DEFAULT_FILTERS, NOW_ISO);
   assert.equal(all.length, db.treatments.length);
-  const med = filterCourses(db, { ...DEFAULT_FILTERS, stage: "medicate" }, "2026-09-13T09:00:00.000Z");
+  const med = filterCourses(db, { ...DEFAULT_FILTERS, stage: "medicate" }, NOW_ISO);
   assert.ok(med.every((v) => v.treatment.stage === "medicate"));
-  const chenOnly = filterCourses(db, { ...DEFAULT_FILTERS, doctorId: chen.id }, "2026-09-13T09:00:00.000Z");
+  const chenOnly = filterCourses(db, { ...DEFAULT_FILTERS, doctorId: chen.id }, NOW_ISO);
   assert.ok(chenOnly.every((v) => v.treatment.doctorId === chen.id));
-  const hit = filterCourses(db, { ...DEFAULT_FILTERS, query: "张伟 37" }, "2026-09-13T09:00:00.000Z");
+  const hit = filterCourses(db, { ...DEFAULT_FILTERS, query: "张伟 37" }, NOW_ISO);
   assert.equal(hit.length, 1);
   assert.equal(hit[0].treatment.tooth, "37");
-  const overdue = filterCourses(db, { ...DEFAULT_FILTERS, overdueOnly: true }, "2030-01-01T00:00:00.000Z");
+  const overdue = filterCourses(db, { ...DEFAULT_FILTERS, overdueOnly: true }, FUTURE_ISO);
   assert.ok(overdue.length >= 1);
-  assert.ok(overdue.every((v) => v.next && new Date(v.next.start).getTime() < Date.parse("2030-01-01")));
+  assert.ok(overdue.every((v) => v.next && new Date(v.next.start).getTime() < Date.parse(FUTURE_ISO)));
 });
 
 console.log("\n[7] 导出只含当前筛选");

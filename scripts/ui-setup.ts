@@ -8,16 +8,30 @@ const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></
 
 const { window } = dom;
 
+// Node 21+ 的 globalThis 自带只读 getter（如 navigator），ESM 严格模式下直接
+// 赋值会抛 "Cannot assign to read only property"。统一用 configurable 描述符注入。
+function install(name: string, value: unknown): void {
+  try {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  } catch {
+    // 个别环境禁止重定义时回退到（非严格）赋值；失败不影响 jsdom 内部运行
+    // eslint-disable-next-line @typescript-eslint/no-extra-semi
+    (globalThis as Record<string, unknown>)[name] = value;
+  }
+}
+
 for (const key of [
   "window", "document", "navigator", "HTMLElement", "HTMLAnchorElement",
   "HTMLInputElement", "HTMLSelectElement", "MouseEvent", "KeyboardEvent",
-  "Event", "CustomEvent", "getComputedStyle",
+  "InputEvent", "Event", "CustomEvent", "getComputedStyle", "localStorage",
 ] as const) {
-  // @ts-expect-error 注入浏览器全局
-  globalThis[key] = window[key];
+  install(key, (window as unknown as Record<string, unknown>)[key]);
 }
 
-globalThis.localStorage = window.localStorage;
 window.confirm = () => true;
 window.HTMLAnchorElement.prototype.click = function click() {
   // jsdom 下拦截 blob 下载导航
