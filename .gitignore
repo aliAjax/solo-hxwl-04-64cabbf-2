@@ -9,3 +9,5 @@ yarn-error.log*
 pnpm-debug.log*
 .idea
 .vscode
+scripts/domain.mjs
+scripts/ui-app.bundle.mjs
